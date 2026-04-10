@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Voting Blockchain ZKP</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    /* candidate colours */
+    .c0{background:var(--accent)} .c1{background:var(--green)} .c2{background:var(--yellow)}
+    .c3{background:var(--blue)}  .c4{background:var(--red)}
+  </style>
+</head>
+<body>
+
+<!-- ─── Header ──────────────────────────────────────────── -->
+<header class="app-header">
+  <div>
+    <h1>Voting Blockchain + ZKP</h1>
+    <span class="subtitle">Distributed Systems &mdash; UFRN / DCA</span>
+  </div>
+  <div>
+    <span id="global-status" class="badge ok">Online</span>
+  </div>
+</header>
+
+<!-- ─── Tabs ────────────────────────────────────────────── -->
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="ledger">Ledger</button>
+  <button class="tab-btn" data-tab="vote">Votar</button>
+  <button class="tab-btn" data-tab="tally">Apuracao</button>
+  <button class="tab-btn" data-tab="events">Eventos</button>
+</nav>
+
+<!-- ─── Ledger tab ──────────────────────────────────────── -->
+<section id="tab-ledger" class="tab-content active">
+  <div class="node-grid">
+    {% for n in nodes %}
+    <div class="node-card" id="card-{{ n.id }}">
+      <div class="card-header">
+        <h3>{{ n.id | upper }}</h3>
+        <span class="badge ok" id="badge-{{ n.id }}">--</span>
+      </div>
+      <div class="card-body">
+        <div class="stat-row"><span class="stat-label">Chain</span><span class="stat-value" id="chain-len-{{ n.id }}">0</span></div>
+        <div class="stat-row"><span class="stat-label">Mempool</span><span class="stat-value" id="mempool-{{ n.id }}">0</span></div>
+        <div class="stat-row"><span class="stat-label">Difficulty</span><span class="stat-value" id="diff-{{ n.id }}">--</span></div>
+        <div class="stat-row"><span class="stat-label">Last hash</span><span class="stat-value hash" id="hash-{{ n.id }}">--</span></div>
+        <h4 style="margin-top:.8rem;margin-bottom:.4rem;color:var(--muted)">Blockchain</h4>
+        <div class="chain-view" id="chain-{{ n.id }}"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- ─── Vote tab ────────────────────────────────────────── -->
+<section id="tab-vote" class="tab-content">
+  <div class="vote-form">
+    <label for="voter-id">Voter ID</label>
+    <input type="text" id="voter-id" placeholder="ex: voter_42">
+
+    <label for="candidate">Candidato</label>
+    <select id="candidate">
+      {% for c in candidates %}
+      <option value="{{ loop.index0 }}">{{ c }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="target-node">Enviar para</label>
+    <select id="target-node">
+      {% for n in nodes %}
+      <option value="{{ n.url }}">{{ n.id }}</option>
+      {% endfor %}
+    </select>
+
+    <button class="btn btn-primary" onclick="castVote()">Enviar voto</button>
+    <div id="vote-result" class="vote-result"></div>
+  </div>
+</section>
+
+<!-- ─── Tally tab ───────────────────────────────────────── -->
+<section id="tab-tally" class="tab-content">
+  <h3 style="margin-bottom:1rem">Apuracao</h3>
+  <div class="tally-total">
+    <span class="tally-total-label">Votos confirmados na blockchain</span>
+    <span class="tally-total-value" id="tally-total">0</span>
+  </div>
+  <div id="tally-candidates" style="margin-top:1.2rem">
+    {% for c in candidates %}
+    <div class="tally-bar-container">
+      <div class="tally-label">
+        <span>{{ c }}</span>
+        <span class="badge" style="font-size:.75rem;opacity:.6">voto secreto</span>
+      </div>
+      <div class="tally-bar"><div class="tally-fill c{{ loop.index0 }}" style="width:100%;opacity:.15"></div></div>
+    </div>
+    {% endfor %}
+  </div>
+  <p style="margin-top:1.2rem;color:var(--muted);font-size:.82rem">
+    Pedersen commitments sao <em>perfectly hiding</em> &mdash; e impossivel saber em quem
+    cada eleitor votou sem conhecer o randomness <em>r</em>. A contagem por candidato
+    exigiria threshold decryption com ElGamal (fora do escopo deste projeto de
+    sistemas distribuidos). O que a ZKP garante: cada cedula contem exatamente 1 voto
+    valido, sem revelar para quem.
+  </p>
+</section>
+
+<!-- ─── Events tab ──────────────────────────────────────── -->
+<section id="tab-events" class="tab-content">
+  <div class="event-log" id="event-log"></div>
+</section>
+
+<!-- ─── JS ──────────────────────────────────────────────── -->
+<script>
+const NODES = {{ nodes | tojson }};
+const CANDIDATES = {{ candidates | tojson }};
+const NUM_CANDIDATES = CANDIDATES.length;
+
+// ── Tabs ──
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Polling ──
+async function fetchJson(url) {
+  try { const r = await fetch(url); return r.ok ? await r.json() : null; }
+  catch { return null; }
+}
+
+async function refreshNodes() {
+  for (const n of NODES) {
+    const s = await fetchJson(n.url + '/status');
+    const badge = document.getElementById('badge-' + n.id);
+    if (!s) { badge.textContent = 'offline'; badge.className = 'badge err'; continue; }
+    badge.textContent = 'online'; badge.className = 'badge ok';
+    document.getElementById('chain-len-' + n.id).textContent = s.chain_length;
+    document.getElementById('mempool-' + n.id).textContent = s.mempool_size;
+    document.getElementById('diff-' + n.id).textContent = s.difficulty;
+    document.getElementById('hash-' + n.id).textContent = s.last_block_hash;
+
+    const blocks = await fetchJson(n.url + '/blocks');
+    const cv = document.getElementById('chain-' + n.id);
+    if (blocks && blocks.length) {
+      cv.innerHTML = blocks.map(b => `
+        <div class="block-card">
+          <div class="block-idx">#${b.index}</div>
+          <div class="hash">${b.hash ? b.hash.slice(0,20)+'...' : 'genesis'}</div>
+          <div class="txs">${b.transactions.length} tx(s)</div>
+          ${b.miner_id ? `<div class="miner">miner: ${b.miner_id}</div>` : ''}
+        </div>`).join('');
+      cv.scrollLeft = cv.scrollWidth;
+    } else {
+      cv.innerHTML = '<span style="color:var(--muted)">Nenhum bloco ainda</span>';
+    }
+  }
+}
+
+async function refreshTally() {
+  const data = await fetchJson(NODES[0].url + '/tally');
+  if (!data) return;
+  document.getElementById('tally-total').textContent = data.total_confirmed_votes || 0;
+}
+
+setInterval(refreshNodes, 2000);
+setInterval(refreshTally, 5000);
+refreshNodes();
+refreshTally();
+
+// ── WebSocket events ──
+function addEvent(type, msg) {
+  const log = document.getElementById('event-log');
+  const t = new Date().toLocaleTimeString();
+  log.innerHTML = `<div class="ev"><span class="ev-time">${t}</span> <span class="ev-type">${type}</span> ${msg}</div>` + log.innerHTML;
+  if (log.children.length > 200) log.lastChild.remove();
+}
+
+for (const n of NODES) {
+  try {
+    const wsUrl = n.url.replace('http','ws') + '/ws';
+    const ws = new WebSocket(wsUrl);
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      const d = msg.data || {};
+      let detail = '';
+      if (msg.type === 'new_transaction') {
+        detail = `[${n.id}] voter=${d.voter_id || '?'} tx=${d.tx_id || ''}`;
+      } else if (msg.type === 'new_block') {
+        detail = `[${n.id}] bloco #${d.index} minerado por ${d.miner_id || '?'} (${d.txs} votos, nonce=${d.nonce}, hash=${d.hash}...)`;
+      } else if (msg.type === 'fork_detected') {
+        detail = `[${n.id}] fork detectado no bloco #${d.index}`;
+      } else {
+        detail = `[${n.id}] ${JSON.stringify(d)}`;
+      }
+      addEvent(msg.type, detail);
+      refreshNodes();
+    };
+    ws.onclose = () => addEvent('ws_close', `[${n.id}] disconnected`);
+  } catch {}
+}
+
+// ── Vote ──
+async function castVote() {
+  const res = document.getElementById('vote-result');
+  res.className = 'vote-result'; res.style.display = 'none';
+  const voterId = document.getElementById('voter-id').value.trim();
+  const candidateIdx = parseInt(document.getElementById('candidate').value);
+  const nodeUrl = document.getElementById('target-node').value;
+
+  if (!voterId) { showResult(res, 'err', 'Preencha o Voter ID'); return; }
+
+  // Step 1: generate ballot via node's /generate-ballot endpoint
+  // (The ballot is generated server-side because the crypto is in Python)
+  try {
+    const gen = await fetch(nodeUrl + '/generate-ballot', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({candidate_index: candidateIdx, num_candidates: NUM_CANDIDATES})
+    });
+    if (!gen.ok) { showResult(res, 'err', 'Erro ao gerar cedula: ' + await gen.text()); return; }
+    const ballot = await gen.json();
+
+    // Step 2: submit the vote
+    const sub = await fetch(nodeUrl + '/transactions', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({voter_id: voterId, ballot_data: ballot})
+    });
+    const body = await sub.json();
+    if (sub.ok) { showResult(res, 'ok', `Voto aceito! tx_id=${body.tx_id?.slice(0,16)}...`); }
+    else { showResult(res, 'err', body.detail || 'Rejeitado'); }
+  } catch (e) {
+    showResult(res, 'err', 'Erro de rede: ' + e.message);
+  }
+}
+
+function showResult(el, cls, msg) {
+  el.className = 'vote-result ' + cls;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+</script>
+</body>
+</html>

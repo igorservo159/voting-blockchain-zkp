@@ -1,0 +1,108 @@
+x-node-template: &node-common
+  build:
+    context: ./node
+  depends_on:
+    - kafka
+
+x-miner-template: &miner-common
+  build:
+    context: ./miner
+  depends_on:
+    - kafka
+
+x-node-env: &node-env
+  KAFKA_BROKER: ${KAFKA_BROKER}
+  TOTAL_NODES: ${TOTAL_NODES}
+  TRANSACTIONS_TOPIC: ${TRANSACTIONS_TOPIC:-transactions}
+  MINING_JOBS_TOPIC: ${MINING_JOBS_TOPIC:-mining_jobs}
+  FOUND_BLOCKS_TOPIC: ${FOUND_BLOCKS_TOPIC:-found_blocks}
+  BATCH_SIZE: ${BATCH_SIZE:-3}
+  MINING_TIMEOUT_SECONDS: ${MINING_TIMEOUT_SECONDS:-20}
+  JITTER_MAX_SECONDS: ${JITTER_MAX_SECONDS:-2}
+  DIFFICULTY: ${DIFFICULTY:-4}
+  CANDIDATES: ${CANDIDATES:-Alice,Bob,Carol}
+
+x-miner-env: &miner-env
+  KAFKA_BROKER: ${KAFKA_BROKER}
+  MINING_JOBS_TOPIC: ${MINING_JOBS_TOPIC:-mining_jobs}
+  FOUND_BLOCKS_TOPIC: ${FOUND_BLOCKS_TOPIC:-found_blocks}
+  DIFFICULTY: ${DIFFICULTY:-4}
+
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    depends_on:
+      - kafka
+
+  node1:
+    <<: *node-common
+    ports: ["8001:8000"]
+    environment:
+      <<: *node-env
+      NODE_NUMBER: "1"
+
+  node2:
+    <<: *node-common
+    ports: ["8002:8000"]
+    environment:
+      <<: *node-env
+      NODE_NUMBER: "2"
+
+  node3:
+    <<: *node-common
+    ports: ["8003:8000"]
+    environment:
+      <<: *node-env
+      NODE_NUMBER: "3"
+
+  miner1:
+    <<: *miner-common
+    environment:
+      <<: *miner-env
+      MINER_NUMBER: "1"
+
+  miner2:
+    <<: *miner-common
+    environment:
+      <<: *miner-env
+      MINER_NUMBER: "2"
+
+  miner3:
+    <<: *miner-common
+    environment:
+      <<: *miner-env
+      MINER_NUMBER: "3"
+
+  ui:
+    build:
+      context: ./ui
+    ports:
+      - "8501:8000"
+    environment:
+      NODE_URLS: http://node1:8000,http://node2:8000,http://node3:8000
+      CANDIDATES: ${CANDIDATES:-Alice,Bob,Carol}
+    depends_on:
+      - node1
+      - node2
+      - node3
