@@ -9,7 +9,7 @@ from src.events.kafka_publisher import KafkaPublisher
 
 logger = logging.getLogger(__name__)
 
-_YIELD_INTERVAL = 1_000
+_YIELD_INTERVAL = 500
 
 
 class MiningService:

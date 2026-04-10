@@ -184,6 +184,10 @@ async def upload_transaction(req: TransactionRequest):
     tx = Transaction(voter_id=req.voter_id, ballot_data=req.ballot_data)
     try:
         result = await upload_tx_use_case.execute(tx)
+        await ws_broadcaster.broadcast("new_transaction", {
+            "voter_id": result.voter_id,
+            "tx_id": result.tx_id[:16],
+        })
         return {"status": "accepted", "tx_id": result.tx_id}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
